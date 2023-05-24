@@ -3,17 +3,26 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
 	pb "gRPC_chat/server/proto"
 	"github.com/golang/protobuf/ptypes/wrappers"
+	"github.com/google/uuid"
 	"github.com/pterm/pterm"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"time"
 )
+
+type User struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
 
 func main() {
 	// 链接服务器
@@ -36,10 +45,34 @@ func main() {
 			pterm.Error.Printfln("进入聊天室失败，用户未取名")
 			continue
 		}
+
+		file, err := os.OpenFile("E:\\GoProject\\src\\gRPC_chat/user.json", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+		if err != nil {
+			log.Fatalf("os.openfile err:%+v\n", err)
+		}
+		defer file.Close()
+
 		user = &pb.User{Name: rerult}
+		user.Id = uuid.New().String()
+
+		Info := User{Id: user.Id, Name: user.Name}
+
+		data, err := json.Marshal(Info)
+		if err != nil {
+			log.Fatalf("json marshal err:%+v\n", err)
+		}
+
+		fmt.Println("data:", string(data))
+
+		IDD, err := file.Write(data)
+		if err != nil {
+			log.Fatalf("file.Write err:%+v\n", err)
+		}
+		fmt.Println("file write ID:", IDD)
+
 		val, err = c.Login(context.TODO(), user)
 		if err != nil {
-			pterm.Error.Printfln("进入聊天室失败 err:%v", err)
+			pterm.Error.Printfln("进入聊天室失败 Login err:%v", err)
 			continue
 		} else {
 			break
@@ -70,4 +103,16 @@ func main() {
 		input = strings.TrimRight(input, "\r \n")
 		stream.Send(&pb.ChatMessage{Id: user.Id, Content: input})
 	}
+}
+
+func mergeJSONData(jsonData string, mergedData *[]User) {
+	var person User
+	err := json.Unmarshal([]byte(jsonData), &person)
+	if err != nil {
+		fmt.Println("JSON Unmarshal error:", err)
+		return
+	}
+
+	// 将每个person对象添加到mergedData切片中
+	*mergedData = append(*mergedData, person)
 }

@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	pb "gRPC_chat/server/proto"
 	"github.com/golang/protobuf/ptypes/wrappers"
-	"github.com/google/uuid"
 	"github.com/pterm/pterm"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"io/ioutil"
+	"log"
 	"sync"
 	"time"
 )
@@ -21,16 +23,38 @@ type service struct {
 	L                sync.RWMutex
 }
 
+type UserInfo struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
 var (
 	workers map[pb.ChatRoom_ChatServer]pb.ChatRoom_ChatServer = make(map[pb.ChatRoom_ChatServer]pb.ChatRoom_ChatServer)
 )
 
 // 用户注册
 func (s *service) Login(ctx context.Context, in *pb.User) (*wrappers.StringValue, error) {
-	in.Id = uuid.New().String()
-	if _, ok := s.userMap.Load(in.Id); ok {
-		return nil, status.Errorf(codes.AlreadyExists, "已有同名用户，请更换")
+
+	jsonData, info := FileModifi()
+	nameMap := make(map[string]bool)
+
+	err := json.Unmarshal(jsonData, &info)
+	if err != nil {
+		log.Printf("JSON unmarshal error:%+v", err)
 	}
+	for _, userInfo := range info {
+		name := userInfo.Name
+		if nameMap[name] {
+			return nil, status.Errorf(codes.AlreadyExists, "用户名已被占用，请更换")
+		} else {
+			nameMap[name] = true
+			pterm.Info.Println("Name:", name)
+		}
+	}
+
+	//if _, ok := s.userMap.Load(in.Id); ok {
+	//	return nil, status.Errorf(codes.AlreadyExists, "已有同名用户，请更换")
+	//}
 	s.userMap.Store(in.Id, in)
 	go s.Send(nil, &pb.ChatMessage{
 		Id:      "server",
@@ -61,13 +85,41 @@ func (s *service) recvMessage(stream pb.ChatRoom_ChatServer) {
 			s.L.Lock()
 			delete(workers, stream)
 			s.userMap.Delete(md.Get("uuid")[0])
-			fmt.Printf("%s用户掉线,目前用户在线数量:%d", md.Get("uuid")[0], len(workers))
+
+			data, err := ioutil.ReadFile("E:\\GoProject\\src\\gRPC_chat/user.json")
+			if err != nil {
+				log.Fatalf("ioutil readfile err:%+v", err)
+			}
+			var Info []UserInfo
+			err = json.Unmarshal(data, &Info)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			var FileInfo []UserInfo
+			for _, v := range Info {
+				if v.Id != md.Get("uuid")[0] {
+					FileInfo = append(FileInfo, v)
+				}
+			}
+
+			jsonData, err := json.Marshal(FileInfo)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			err = ioutil.WriteFile("E:\\GoProject\\src\\gRPC_chat/user.json", jsonData, 0666)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			pterm.Info.Printf("%s用户掉线,目前用户在线数量:%d", md.Get("uuid")[0], len(workers))
 			break
 		}
 		s.chatMessageCache = append(s.chatMessageCache, mesg)
 		v, ok := s.userMap.Load(md.Get("uuid")[0])
 		if !ok {
-			fmt.Println("用户不存在")
+			pterm.Error.Println("用户不存在")
 			return
 		}
 
